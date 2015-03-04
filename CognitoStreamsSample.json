@@ -1,0 +1,538 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Amazon Cognito Streams Sample",
+  "Parameters": {
+    "StreamName": {
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "128",
+      "Description": "Enter the kinesis stream that you associated with your identity pool.",
+      "ConstraintDescription": "Enter in a valid string"
+    },
+    "InboundTraffic": {
+      "Description": "Allow inbound traffic to the cluster from this CIDR range.",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid CIDR range of the form x.x.x.x/x."
+    },
+    "PortNumber": {
+      "Description": "The port number on which the cluster accepts incoming connections.",
+      "Type": "Number",
+      "Default": "5439"
+    },
+    "MasterUserName": {
+      "Description": "The username that is associated with the master user account for the cluster that is being created",
+      "MinLength": "1",
+      "MaxLength": "127",
+      "Type": "String"
+    },
+    "MasterUserPassword": {
+      "Description": "The password that is associated with the master user account for the cluster that is being created (min 8 characters, contain at least one uppercase letter, one lowercase letter, and one number).",
+      "Type": "String",
+      "MinLength": "8",
+      "MaxLength": "64",
+      "ConstraintDescription": "Must meet Redshift password requirements (min 8 characters, contain at least one uppercase letter, one lowercase letter, and one number).",
+      "NoEcho": "true"
+    },
+    "AlarmEmail": {
+      "Description": "Email address to notify if there are any operational issues",
+      "Type": "String",
+      "AllowedPattern": "([a-zA-Z0-9_.-]+)@([a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,4}",
+      "ConstraintDescription": "must be a valid email address."
+    },
+    "Delay": {
+      "Type": "Number",
+      "Description": "Enter the delay (in milliseconds) in consumption from stream after which alarm will be triggered.",
+      "Default": "3600000"
+    },
+    "KinesisRecordThreshold": {
+      "Type": "Number",
+      "Description": "Enter the incoming records in 5 mins in Kinesis after that you will be notified to provision more shards.  Each shard can support up to 1000 records written per second.",
+      "Default": "240000"
+    }
+  },
+  "Resources": {
+    "AmazonCognitoStreamsSampleRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "AmazonCognitoStreamsSamplePolicy",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": [
+                    "dynamodb:*",
+                    "s3:*",
+                    "cloudwatch:*",
+                    "kinesis:*"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "AmazonCognitoStreamsSampleInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "AmazonCognitoStreamsSampleRole"
+          }
+        ]
+      }
+    },
+    "AmazonCognitoStreamsSampleApplication": {
+      "Type": "AWS::ElasticBeanstalk::Application",
+      "Properties": {
+        "Description": "Sample application for showcasing Amazon Cognito streams",
+        "ApplicationVersions": [
+          {
+            "VersionLabel": "Version1",
+            "Description": "Release version",
+            "SourceBundle": {
+              "S3Bucket": { "Fn::Join": ["-", [ "amazon-cognito-samples", { "Ref": "AWS::Region" } ] ] },
+              "S3Key": "AmazonCognitoStreamsSample-1.0.war"
+            }
+          }
+        ],
+        "ConfigurationTemplates": [
+          {
+            "TemplateName": "DefaultConfiguration",
+            "Description": "64bit Amazon Linux running Tomcat 7",
+            "SolutionStackName": "64bit Amazon Linux 2014.09 v1.1.0 running Tomcat 7 Java 7",
+            "OptionSettings": [
+              {
+                "Namespace": "aws:elasticbeanstalk:environment",
+                "OptionName": "EnvironmentType",
+                "Value": "SingleInstance"
+              },
+              {
+                "Namespace": "aws:autoscaling:launchconfiguration",
+                "OptionName": "InstanceType",
+                "Value": "t2.micro"
+              },
+              {
+                "Namespace": "aws:autoscaling:asg",
+                "OptionName": "MaxSize",
+                "Value": "1"
+              },
+              {
+                "Namespace": "aws:autoscaling:launchconfiguration",
+                "OptionName": "IamInstanceProfile",
+                "Value": {
+                  "Ref": "AmazonCognitoStreamsSampleInstanceProfile"
+                }
+              },
+              {
+                "Namespace": "aws:ec2:vpc",
+                "OptionName": "VPCId",
+                "Value": { "Ref": "VPC" }
+              },
+              {
+                "Namespace": "aws:ec2:vpc",
+                "OptionName": "Subnets",
+                "Value": { "Ref" : "PublicSubnet" }
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": "JDBC_CONNECTION_STRING",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "jdbc:postgresql://",
+                      {
+                        "Fn::GetAtt": [
+                          "RedshiftCluster",
+                          "Endpoint.Address"
+                        ]
+                      },
+                      ":",
+                      {
+                        "Fn::GetAtt": [
+                          "RedshiftCluster",
+                          "Endpoint.Port"
+                        ]
+                      },
+                      "/cognito?tcpKeepAlive=true"
+                    ]
+                  ]
+                }
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": "PARAM1",
+                "Value": {
+                  "Ref": "StreamName"
+                }
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": "PARAM2",
+                "Value": {
+                  "Ref": "MasterUserName"
+                }
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": "PARAM3",
+                "Value": {
+                  "Ref": "MasterUserPassword"
+                }
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": "PARAM4",
+                "Value": {
+                  "Ref": "S3IntermediateBucket"
+                }
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": "PARAM5",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "AmazonCognitoStreamsSampleEnvironment": {
+      "Type": "AWS::ElasticBeanstalk::Environment",
+      "Properties": {
+        "ApplicationName": {
+          "Ref": "AmazonCognitoStreamsSampleApplication"
+        },
+        "Description": "AmazonCognitoStreamsSampleEnvironment",
+        "TemplateName": "DefaultConfiguration",
+        "VersionLabel": "Version1"
+      }
+    },
+    "S3IntermediateBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "ExpirationInDays": "10",
+              "Id": "delete-old-files",
+              "Status": "Enabled"
+            }
+          ]
+        }
+      }
+    },
+    "RedshiftCluster": {
+      "Type": "AWS::Redshift::Cluster",
+      "DependsOn": "AttachGateway",
+      "Properties": {
+        "DBName": "cognito",
+        "MasterUsername": {
+          "Ref": "MasterUserName"
+        },
+        "MasterUserPassword": {
+          "Ref": "MasterUserPassword"
+        },
+        "NodeType": "dw2.large",
+        "ClusterType": "single-node",
+        "ClusterParameterGroupName": {
+          "Ref": "RedshiftClusterParameterGroup"
+        },
+        "VpcSecurityGroupIds": [
+          {
+            "Ref": "SecurityGroup"
+          }
+        ],
+        "ClusterSubnetGroupName": {
+          "Ref": "RedshiftClusterSubnetGroup"
+        },
+        "PubliclyAccessible": "true",
+        "Port": {
+          "Ref": "PortNumber"
+        }
+      }
+    },
+    "RedshiftClusterParameterGroup": {
+      "Type": "AWS::Redshift::ClusterParameterGroup",
+      "Properties": {
+        "Description": "Cluster parameter group",
+        "ParameterGroupFamily": "redshift-1.0",
+        "Parameters": [
+          {
+            "ParameterName": "enable_user_activity_logging",
+            "ParameterValue": "true"
+          }
+        ]
+      }
+    },
+    "RedshiftClusterSubnetGroup": {
+      "Type": "AWS::Redshift::ClusterSubnetGroup",
+      "Properties": {
+        "Description": "Cluster subnet group",
+        "SubnetIds": [
+          {
+            "Ref": "PublicSubnet"
+          }
+        ]
+      }
+    },
+    "VPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.0.0.0/16"
+      }
+    },
+    "PublicSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": "10.0.0.0/24",
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group",
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": {
+              "Ref": "InboundTraffic"
+            },
+            "FromPort": {
+              "Ref": "PortNumber"
+            },
+            "ToPort": {
+              "Ref": "PortNumber"
+            },
+            "IpProtocol": "tcp"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "myInternetGateway": {
+      "Type": "AWS::EC2::InternetGateway"
+    },
+    "AttachGateway": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "InternetGatewayId": {
+          "Ref": "myInternetGateway"
+        }
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "PublicRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "AttachGateway",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "myInternetGateway"
+        }
+      }
+    },
+    "PublicSubnetRouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      }
+    },
+    "DynamoDBTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "leaseKey",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "leaseKey",
+            "KeyType": "HASH"
+          }
+        ],
+        "ProvisionedThroughput": {
+          "ReadCapacityUnits": 10,
+          "WriteCapacityUnits": 10
+        },
+        "TableName": "AmazonCognitoStreamsSample"
+      }
+    },
+    "AlarmTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "Subscription": [
+          {
+            "Endpoint": {
+              "Ref": "AlarmEmail"
+            },
+            "Protocol": "email"
+          }
+        ]
+      }
+    },
+    "KinesisIteratorAgeAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Alarm if Kinesis iterator age goes above 1 hour",
+        "Namespace": "AWS/Kinesis",
+        "MetricName": "GetRecords.IteratorAge",
+        "Dimensions": [
+          {
+            "Name": "StreamName",
+            "Value": {
+              "Ref": "StreamName"
+            }
+          }
+        ],
+        "Statistic": "Average",
+        "Period": "300",
+        "EvaluationPeriods": "2",
+        "Threshold": {
+          "Ref": "Delay"
+        },
+        "ComparisonOperator": "GreaterThanThreshold",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "KinesisNoDataAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Alarm if there is no data in Kinesis for 15 mins",
+        "Namespace": "AWS/Kinesis",
+        "MetricName": "IncomingRecords",
+        "Dimensions": [
+          {
+            "Name": "StreamName",
+            "Value": {
+              "Ref": "StreamName"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": "300",
+        "EvaluationPeriods": "3",
+        "Threshold": 1,
+        "ComparisonOperator": "LessThanThreshold",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "KinesisHighIncomingRecords": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Alarm if there incoming rate to Kinesis is high.",
+        "Namespace": "AWS/Kinesis",
+        "MetricName": "IncomingRecords",
+        "Dimensions": [
+          {
+            "Name": "StreamName",
+            "Value": {
+              "Ref": "StreamName"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": "300",
+        "EvaluationPeriods": "3",
+        "Threshold": {
+          "Ref": "KinesisRecordThreshold"
+        },
+        "ComparisonOperator": "GreaterThanThreshold",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "ClusterEndpoint": {
+      "Description": "Cluster JDBC Connection",
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "jdbc:postgresql://",
+            {
+              "Fn::GetAtt": [
+                "RedshiftCluster",
+                "Endpoint.Address"
+              ]
+            },
+            ":",
+            {
+              "Fn::GetAtt": [
+                "RedshiftCluster",
+                "Endpoint.Port"
+              ]
+            },
+            "/cognito?tcpKeepAlive=true"
+          ]
+        ]
+      }
+    }
+  }
+}
