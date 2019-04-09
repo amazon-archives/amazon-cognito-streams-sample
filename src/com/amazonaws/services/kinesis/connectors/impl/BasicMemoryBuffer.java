@@ -1,5 +1,5 @@
 /*
-// Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0.
  */
 package com.amazonaws.services.kinesis.connectors.impl;
